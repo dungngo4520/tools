@@ -1,0 +1,51 @@
+name: CI - build tools
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build and upload artifacts
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64-linux-gnu, aarch64-linux-gnu]
+    env:
+      ZIG_VERSION: "0.15.1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget xz-utils tar
+
+      - name: Download and install Zig
+        run: |
+          set -eux
+          ZV="$ZIG_VERSION"
+          # Always download x86_64 Zig on ubuntu-latest (which is x86_64)
+          URL="https://ziglang.org/download/$ZV/zig-x86_64-linux-$ZV.tar.xz"
+          echo "Downloading $URL"
+          wget -q "$URL" -O /tmp/zig.tar.xz
+          mkdir -p $HOME/zig
+          tar -xf /tmp/zig.tar.xz -C $HOME/zig --strip-components=1
+          echo "$HOME/zig" >> $GITHUB_PATH
+
+      - name: Show zig version
+        run: zig version
+
+      - name: Build all tools
+        run: |
+          zig build --summary all -Dtool=all -Dtarget=${{ matrix.target }}
+
+      - name: List build output
+        run: ls -R zig-out || true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.target }}
+          path: zig-out/bin
