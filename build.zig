@@ -4,7 +4,9 @@ const fs = std.fs;
 pub fn build(b: *std.Build) void {
     // Standard build options
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    // Default to ReleaseFast for production builds (can be overridden with -Doptimize=Debug)
+    const optimize_opt = b.standardOptimizeOption(.{});
+    const optimize = if (optimize_opt == .Debug) .ReleaseFast else optimize_opt;
 
     // Custom options
     const tool_opt = b.option([]const u8, "tool", "Tool to build ('all' or tool name)") orelse "all";
