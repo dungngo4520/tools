@@ -59,8 +59,30 @@ pub fn build(b: *std.Build) void {
             .name = tool_name,
             .root_module = root_module,
         });
-        // Install executable
-        b.installArtifact(exe);
+
+        // Get target info to construct directory name
+        const target_info = target.result;
+        const arch_name = @tagName(target_info.cpu.arch);
+        const os_name = @tagName(target_info.os.tag);
+        const abi_name = @tagName(target_info.abi);
+
+        // Construct target triple string for directory structure
+        const target_triple = std.fmt.allocPrint(
+            b.allocator,
+            "{s}-{s}-{s}",
+            .{ arch_name, os_name, abi_name },
+        ) catch unreachable;
+        defer b.allocator.free(target_triple);
+
+        // Install to target-specific directory: zig-out/<target>/bin/
+        // Note: .custom is relative to install prefix (zig-out), so we don't include it
+        const install_dir_path = b.fmt("{s}/bin", .{target_triple});
+        const target_install_step = b.addInstallFileWithDir(
+            exe.getEmittedBin(),
+            .{ .custom = install_dir_path },
+            b.fmt("{s}", .{exe.out_filename}),
+        );
+        b.getInstallStep().dependOn(&target_install_step.step);
     }
 
     // Create a clean step that removes build artifacts

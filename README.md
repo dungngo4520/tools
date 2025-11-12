@@ -4,7 +4,7 @@ This workspace organizes multiple small Zig tools, each stored in its own folder
 
 ## Project Structure
 
-```
+```text
 tools/
 ├── build.zig              # Zig build script
 ├── README.md              # This file
@@ -13,26 +13,35 @@ tools/
 ├── hello/
 │   ├── main.zig           # Hello tool source
 │   └── README.md          # Hello tool documentation
-└── echo/
-    ├── main.zig           # Echo tool source
-    └── README.md          # Echo tool documentation
+├── echo/
+│   ├── main.zig           # Echo tool source
+│   └── README.md          # Echo tool documentation
+└── psmon/
+    ├── main.zig           # Process monitor source
+    └── README.md          # Process monitor documentation
 ```
 
 ## Build Output Structure
 
 Built binaries are organized by target triple in `zig-out/`:
 
-```
+```text
 zig-out/
-├── native/                     # Native (host) target binaries
-│   ├── hello
-│   └── echo
-├── aarch64-linux-gnu/          # ARM64 Linux
-│   ├── hello
-│   └── echo
-└── x86_64-windows-gnu/         # x86_64 Windows
-    ├── hello.exe
-    └── echo.exe
+├── x86_64-linux-gnu/          # x86_64 Linux
+│   └── bin/
+│       ├── hello
+│       ├── echo
+│       └── psmon
+├── aarch64-linux-gnu/         # ARM64 Linux
+│   └── bin/
+│       ├── hello
+│       ├── echo
+│       └── psmon
+└── x86_64-windows-gnu/        # x86_64 Windows
+    └── bin/
+        ├── hello.exe
+        ├── echo.exe
+        └── psmon.exe
 ```
 
 ## Build System
@@ -53,7 +62,7 @@ Build a specific tool:
 zig build -Dtool=hello
 ```
 
-Output location: `zig-out/native/`
+Output location: `zig-out/<target>/bin/` (where `<target>` is the target triple, e.g., `x86_64-linux-gnu`)
 
 ### Cross-compilation
 
@@ -63,7 +72,7 @@ Cross-compile to a specific target triple:
 zig build -Dtarget=aarch64-linux-gnu
 ```
 
-Output location: `zig-out/aarch64-linux-gnu/`
+Output location: `zig-out/<target>/bin/` (where `<target>` is the specified target triple)
 
 Supported targets (examples):
 
@@ -91,6 +100,7 @@ Each tool has its own documentation:
 
 - **[hello](hello/README.md)** — Simple greeting utility
 - **[echo](echo/README.md)** — Echo command-line arguments
+- **[psmon](psmon/README.md)** — Process monitor for resource usage
 
 ## Notes
 

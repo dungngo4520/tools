@@ -10,7 +10,7 @@ A simple greeting utility written in Zig.
 
 ## Output
 
-```
+```text
 Hello from hello
 ```
 
