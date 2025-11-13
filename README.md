@@ -2,48 +2,6 @@
 
 This workspace organizes multiple small Zig tools, each stored in its own folder with independent documentation.
 
-## Project Structure
-
-```text
-tools/
-├── build.zig              # Zig build script
-├── README.md              # This file
-├── .editorconfig           # Editor settings
-├── .gitignore              # Git ignore rules
-├── hello/
-│   ├── main.zig           # Hello tool source
-│   └── README.md          # Hello tool documentation
-├── echo/
-│   ├── main.zig           # Echo tool source
-│   └── README.md          # Echo tool documentation
-└── psmon/
-    ├── main.zig           # Process monitor source
-    └── README.md          # Process monitor documentation
-```
-
-## Build Output Structure
-
-Built binaries are organized by target triple in `zig-out/`:
-
-```text
-zig-out/
-├── x86_64-linux-gnu/          # x86_64 Linux
-│   └── bin/
-│       ├── hello
-│       ├── echo
-│       └── psmon
-├── aarch64-linux-gnu/         # ARM64 Linux
-│   └── bin/
-│       ├── hello
-│       ├── echo
-│       └── psmon
-└── x86_64-windows-gnu/        # x86_64 Windows
-    └── bin/
-        ├── hello.exe
-        ├── echo.exe
-        └── psmon.exe
-```
-
 ## Build System
 
 The project uses Zig's native build system (`zig build`). No shell scripts or system commands are required, making it fully cross-platform compatible.
@@ -87,7 +45,7 @@ Supported targets (examples):
 Remove build artifacts:
 
 ```bash
-zig build clean-dist
+zig build clean
 ```
 
 ## Project Options

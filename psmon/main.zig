@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const ProcessInfo = struct {
-    pid: std.posix.pid_t,
+    pid: u32, // Use u32 for cross-platform compatibility
     name: []const u8,
     cpu_percent: f64,
     memory_kb: u64,
@@ -92,7 +92,7 @@ pub fn main() !void {
 
         std.debug.print("{s:<20} {d:<8} {s:>10} {s:>12} {s:>12} {s:>12} {s:>12} {s:>10}\n", .{
             proc.name,
-            @as(u32, @intCast(proc.pid)), // Cast to unsigned for proper display
+            proc.pid,
             cpu_str,
             memory_str,
             disk_read_str,
@@ -104,13 +104,26 @@ pub fn main() !void {
 }
 
 fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8, out: *std.ArrayListUnmanaged(ProcessInfo)) !void {
+    switch (builtin.target.os.tag) {
+        .linux => try findProcessesLinux(allocator, process_names, out),
+        .windows => try findProcessesWindows(allocator, process_names, out),
+        .macos => try findProcessesMacOS(allocator, process_names, out),
+        else => {
+            std.debug.print("Error: Unsupported operating system: {s}\n", .{@tagName(builtin.target.os.tag)});
+            return error.UnsupportedOS;
+        },
+    }
+}
+
+// Linux implementation using /proc filesystem
+fn findProcessesLinux(allocator: std.mem.Allocator, process_names: []const []const u8, out: *std.ArrayListUnmanaged(ProcessInfo)) !void {
     var proc_dir = try std.fs.cwd().openDir("/proc", .{ .iterate = true });
     defer proc_dir.close();
 
     var iter = proc_dir.iterate();
     while (try iter.next()) |entry| {
         // Check if entry is a directory with numeric name (PID)
-        const pid = std.fmt.parseInt(std.posix.pid_t, entry.name, 10) catch continue;
+        const pid = std.fmt.parseInt(u32, entry.name, 10) catch continue;
 
         // Read process name from /proc/[pid]/comm
         const comm_path = try std.fmt.allocPrint(allocator, "{d}/comm", .{pid});
@@ -150,25 +163,19 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
         const stat_line = stat_buf[0..stat_len];
 
         // Parse /proc/[pid]/stat
-        // Format: pid (comm) state ppid ... utime stime ... starttime ... rss ...
-        // The comm field is in parentheses and may contain spaces, so we need to find it
         var stat_rest = stat_line;
-        // Skip pid (first token before space)
         if (std.mem.indexOf(u8, stat_rest, " ")) |space_idx| {
             stat_rest = stat_rest[space_idx + 1 ..];
         } else continue;
 
-        // Find the closing parenthesis of comm field
         if (std.mem.indexOf(u8, stat_rest, ")")) |paren_idx| {
-            stat_rest = stat_rest[paren_idx + 2 ..]; // Skip ") "
+            stat_rest = stat_rest[paren_idx + 2 ..];
         } else continue;
 
-        // Now tokenize the rest
         var tokens = std.mem.tokenizeScalar(u8, stat_rest, ' ');
         _ = tokens.next(); // state
         _ = tokens.next(); // ppid
 
-        // Skip to utime (field 14, 0-indexed)
         var i: usize = 0;
         while (i < 9) : (i += 1) {
             _ = tokens.next();
@@ -176,36 +183,43 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
         const utime_str = tokens.next() orelse continue;
         const stime_str = tokens.next() orelse continue;
 
-        // Skip to starttime (field 22, 0-indexed)
         i = 0;
         while (i < 6) : (i += 1) {
             _ = tokens.next();
         }
         const starttime_str = tokens.next() orelse continue;
 
-        // Skip to rss (field 24)
-        // After starttime (22): vsize (23), then rss (24)
-        _ = tokens.next(); // vsize (field 23)
+        // After starttime (field 22): vsize (field 23), then rss (field 24)
+        // cutime and cstime come BEFORE starttime, not after
+        const vsize_str = tokens.next() orelse continue;
         const rss_str = tokens.next() orelse continue; // rss (field 24)
 
         const utime = try std.fmt.parseInt(u64, utime_str, 10);
         const stime = try std.fmt.parseInt(u64, stime_str, 10);
         const starttime = try std.fmt.parseInt(u64, starttime_str, 10);
-        const rss = try std.fmt.parseInt(u64, rss_str, 10);
+        _ = try std.fmt.parseInt(u64, vsize_str, 10); // vsize - not used but need to skip it
+        const rss = std.fmt.parseInt(u64, rss_str, 10) catch {
+            // If parsing fails (e.g., max u64), skip this process
+            continue;
+        };
 
-        // Memory in KB (rss is in pages, typically 4KB per page on Linux)
-        // Use u128 for calculation to avoid overflow, then cast back to u64
+        // Sanity check: RSS should be reasonable (less than 100 million pages = ~400GB)
+        // Field 25 often contains max u64, so this check prevents reading wrong field
+        if (rss > 100_000_000) {
+            continue;
+        }
+
         const page_size: u64 = 4096;
         const memory_bytes = @as(u128, rss) * @as(u128, page_size);
         const memory_kb_128 = memory_bytes / 1024;
-        // Safely cast to u64, saturate at max if needed
-        const memory_kb = if (memory_kb_128 > std.math.maxInt(u64))
-            std.math.maxInt(u64)
-        else
-            @as(u64, @intCast(memory_kb_128));
 
-        // Calculate CPU percentage
-        // Read system uptime to calculate process elapsed time
+        // Check for overflow - if memory_kb would exceed reasonable limits, skip this process
+        if (memory_kb_128 > 1_000_000_000_000) { // More than 1TB in KB is unreasonable
+            continue;
+        }
+
+        const memory_kb = @as(u64, @intCast(memory_kb_128));
+
         var cpu_percent: f64 = 0.0;
         if (std.fs.cwd().openFile("/proc/uptime", .{})) |uptime_file| {
             defer uptime_file.close();
@@ -216,31 +230,23 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
                     const uptime_sec_str = uptime_tokens.next() orelse "";
                     const uptime_sec = std.fmt.parseFloat(f64, uptime_sec_str) catch 0.0;
 
-                    // Get clock ticks per second (standard value is 100 on Linux)
                     const clock_ticks_per_sec: u64 = 100;
                     const total_cpu_time = @as(f64, @floatFromInt(utime + stime)) / @as(f64, @floatFromInt(clock_ticks_per_sec));
                     const process_start_sec = @as(f64, @floatFromInt(starttime)) / @as(f64, @floatFromInt(clock_ticks_per_sec));
                     const process_elapsed_sec = uptime_sec - process_start_sec;
 
                     if (process_elapsed_sec > 0) {
-                        // CPU percentage = (CPU time / elapsed time) * 100
-                        // For multi-core systems, this can exceed 100%
                         cpu_percent = (total_cpu_time / process_elapsed_sec) * 100.0;
                     }
                 }
-            } else |_| {
-                // Error reading uptime - skip CPU calculation
-            }
-        } else |_| {
-            // Cannot open /proc/uptime - skip CPU calculation
-        }
-
-        // Read I/O stats (optional)
-        const io_path = try std.fmt.allocPrint(allocator, "{d}/io", .{pid});
-        defer allocator.free(io_path);
+            } else |_| {}
+        } else |_| {}
 
         var disk_read_bytes: ?u64 = null;
         var disk_write_bytes: ?u64 = null;
+
+        const io_path = try std.fmt.allocPrint(allocator, "{d}/io", .{pid});
+        defer allocator.free(io_path);
 
         if (proc_dir.openFile(io_path, .{})) |io_file| {
             defer io_file.close();
@@ -251,26 +257,21 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
                 while (io_lines.next()) |line| {
                     if (std.mem.startsWith(u8, line, "read_bytes:")) {
                         var io_tokens = std.mem.tokenizeScalar(u8, line, ' ');
-                        _ = io_tokens.next(); // "read_bytes:"
+                        _ = io_tokens.next();
                         if (io_tokens.next()) |val| {
                             disk_read_bytes = std.fmt.parseInt(u64, val, 10) catch null;
                         }
                     } else if (std.mem.startsWith(u8, line, "write_bytes:")) {
                         var io_tokens = std.mem.tokenizeScalar(u8, line, ' ');
-                        _ = io_tokens.next(); // "write_bytes:"
+                        _ = io_tokens.next();
                         if (io_tokens.next()) |val| {
                             disk_write_bytes = std.fmt.parseInt(u64, val, 10) catch null;
                         }
                     }
                 }
-            } else |_| {
-                // Permission denied or other error - skip I/O stats for this process
-            }
-        } else |_| {
-            // File doesn't exist or permission denied - that's okay
-        }
+            } else |_| {}
+        } else |_| {}
 
-        // Count open file descriptors (optional)
         var open_files: ?u64 = null;
         const fd_path = try std.fmt.allocPrint(allocator, "{d}/fd", .{pid});
         defer allocator.free(fd_path);
@@ -284,9 +285,7 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
                 count += 1;
             }
             open_files = count;
-        } else |_| {
-            // Directory doesn't exist or permission denied - that's okay
-        }
+        } else |_| {}
 
         const name_dup = try allocator.dupe(u8, comm);
         try out.append(allocator, ProcessInfo{
@@ -301,17 +300,149 @@ fn findProcesses(allocator: std.mem.Allocator, process_names: []const []const u8
     }
 }
 
-fn formatBytes(allocator: std.mem.Allocator, bytes: u64) ![]const u8 {
-    const kb = bytes / 1024;
-    const mb = kb / 1024;
-    const gb = mb / 1024;
+// Windows implementation using Windows API
+fn findProcessesWindows(allocator: std.mem.Allocator, process_names: []const []const u8, out: *std.ArrayListUnmanaged(ProcessInfo)) !void {
+    // Use wmic command to get process information on Windows
+    // Full Windows API implementation would require CreateToolhelp32Snapshot, Process32First, etc.
+    // For now, we'll use a simpler approach with system commands
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
 
-    if (gb > 0) {
-        return try std.fmt.allocPrint(allocator, "{d}.{d} GB", .{ gb, (mb % 1024) / 100 });
-    } else if (mb > 0) {
-        return try std.fmt.allocPrint(allocator, "{d}.{d} MB", .{ mb, (kb % 1024) / 100 });
-    } else if (kb > 0) {
-        return try std.fmt.allocPrint(allocator, "{d} KB", .{kb});
+    // Use wmic to get process information (available on Windows)
+    const wmic_cmd = try std.fmt.allocPrint(arena_allocator, "wmic process get ProcessId,Name,WorkingSetSize,PageFileUsage /format:csv", .{});
+    defer arena_allocator.free(wmic_cmd);
+
+    var process = std.process.Child.init(&.{ "cmd", "/c", wmic_cmd }, allocator);
+    process.stdin_behavior = .Ignore;
+    process.stdout_behavior = .Pipe;
+    process.stderr_behavior = .Ignore;
+
+    try process.spawn();
+    defer _ = process.kill() catch {};
+
+    const stdout = try process.stdout.?.readToEndAlloc(arena_allocator, 10 * 1024 * 1024);
+    _ = try process.wait();
+
+    // Parse wmic output (CSV format)
+    var lines = std.mem.tokenizeScalar(u8, stdout, '\n');
+    _ = lines.next(); // Skip header line
+
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+
+        var fields = std.mem.tokenizeScalar(u8, line, ',');
+        _ = fields.next(); // Skip first empty field (CSV quirk)
+        const name_field = fields.next() orelse continue;
+        const pid_field = fields.next() orelse continue;
+        const mem_field = fields.next() orelse continue;
+        _ = fields.next(); // Skip PageFileUsage
+
+        const pid = std.fmt.parseInt(u32, std.mem.trim(u8, pid_field, " \r\n"), 10) catch continue;
+        const name = std.mem.trim(u8, name_field, " \r\n");
+        const mem_bytes = std.fmt.parseInt(u64, std.mem.trim(u8, mem_field, " \r\n"), 10) catch continue;
+        const memory_kb = mem_bytes / 1024;
+
+        // Check if process name matches
+        var matches = false;
+        for (process_names) |search_name| {
+            if (std.mem.indexOf(u8, name, search_name) != null) {
+                matches = true;
+                break;
+            }
+        }
+        if (!matches) continue;
+
+        const name_dup = try allocator.dupe(u8, name);
+        try out.append(allocator, ProcessInfo{
+            .pid = pid,
+            .name = name_dup,
+            .cpu_percent = 0.0, // CPU calculation requires more complex Windows API calls
+            .memory_kb = memory_kb,
+            .disk_read_bytes = null, // Requires I/O counters from Windows API
+            .disk_write_bytes = null,
+            .open_files = null, // Requires handle enumeration from Windows API
+        });
+    }
+}
+
+// macOS implementation using ps command
+fn findProcessesMacOS(allocator: std.mem.Allocator, process_names: []const []const u8, out: *std.ArrayListUnmanaged(ProcessInfo)) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const arena_allocator = arena.allocator();
+
+    // Use ps command to get process information
+    var process = std.process.Child.init(&.{ "ps", "-ax", "-o", "pid=,comm=,rss=,pcpu=" }, allocator);
+    process.stdin_behavior = .Ignore;
+    process.stdout_behavior = .Pipe;
+    process.stderr_behavior = .Ignore;
+
+    try process.spawn();
+    defer _ = process.kill() catch {};
+
+    const stdout = try process.stdout.?.readToEndAlloc(arena_allocator, 10 * 1024 * 1024);
+    _ = try process.wait();
+
+    // Parse ps output
+    var lines = std.mem.tokenizeScalar(u8, stdout, '\n');
+
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+
+        // ps output format: "PID COMM RSS %CPU"
+        var fields = std.mem.tokenizeScalar(u8, line, ' ');
+        const pid_str = fields.next() orelse continue;
+        const comm = fields.next() orelse continue;
+        const rss_str = fields.next() orelse continue;
+        const pcpu_str = fields.next() orelse "0.0";
+
+        const pid = std.fmt.parseInt(u32, pid_str, 10) catch continue;
+        const rss_kb = std.fmt.parseInt(u64, rss_str, 10) catch continue;
+        const cpu_percent = std.fmt.parseFloat(f64, pcpu_str) catch 0.0;
+
+        // Check if process name matches
+        var matches = false;
+        for (process_names) |search_name| {
+            if (std.mem.indexOf(u8, comm, search_name) != null) {
+                matches = true;
+                break;
+            }
+        }
+        if (!matches) continue;
+
+        const name_dup = try allocator.dupe(u8, comm);
+        try out.append(allocator, ProcessInfo{
+            .pid = pid,
+            .name = name_dup,
+            .cpu_percent = cpu_percent,
+            .memory_kb = rss_kb,
+            .disk_read_bytes = null, // Requires I/O stats from sysctl or libproc
+            .disk_write_bytes = null,
+            .open_files = null, // Requires file descriptor count from libproc
+        });
+    }
+}
+
+fn formatBytes(allocator: std.mem.Allocator, bytes: u64) ![]const u8 {
+    const bytes_f64 = @as(f64, @floatFromInt(bytes));
+    const kb = bytes_f64 / 1024.0;
+    const mb = kb / 1024.0;
+    const gb = mb / 1024.0;
+
+    if (gb >= 1.0) {
+        const gb_int = @as(u64, @intFromFloat(gb));
+        const mb_remainder = mb - (@as(f64, @floatFromInt(gb_int)) * 1024.0);
+        const decimal = @as(u64, @intFromFloat(mb_remainder * 10.0 / 1024.0));
+        return try std.fmt.allocPrint(allocator, "{d}.{d} GB", .{ gb_int, decimal });
+    } else if (mb >= 1.0) {
+        const mb_int = @as(u64, @intFromFloat(mb));
+        const kb_remainder = kb - (@as(f64, @floatFromInt(mb_int)) * 1024.0);
+        const decimal = @as(u64, @intFromFloat(kb_remainder * 10.0 / 1024.0));
+        return try std.fmt.allocPrint(allocator, "{d}.{d} MB", .{ mb_int, decimal });
+    } else if (kb >= 1.0) {
+        const kb_int = @as(u64, @intFromFloat(kb));
+        return try std.fmt.allocPrint(allocator, "{d} KB", .{kb_int});
     } else {
         return try std.fmt.allocPrint(allocator, "{d} B", .{bytes});
     }

@@ -50,8 +50,27 @@ firefox              12345    5.23       524288       1024 MB      512 MB       
 - On multi-core systems, CPU percentage can exceed 100%
 - Network I/O monitoring is not yet implemented
 
+## Platform Support
+
+`psmon` supports multiple operating systems:
+
+- **Linux**: Full support with CPU, memory, disk I/O, and open file counts
+  - Uses `/proc` filesystem for process information
+  - Requires sufficient permissions (some features may require root)
+  
+- **Windows**: Basic support with process name, PID, and memory
+  - Uses `wmic` command to query process information
+  - CPU, disk I/O, and open files are not yet implemented
+  - Requires Windows with `wmic` available (Windows 10/11)
+  
+- **macOS**: Basic support with process name, PID, memory, and CPU
+  - Uses `ps` command to query process information
+  - Disk I/O and open files are not yet implemented
+  - Requires standard Unix tools (`ps`)
+
 ## Requirements
 
-- Linux system with `/proc` filesystem
-- Sufficient permissions to read process information (some features require root)
+- **Linux**: `/proc` filesystem and sufficient permissions
+- **Windows**: `wmic` command (available on Windows 10/11)
+- **macOS**: Standard Unix tools (`ps` command)
 
