@@ -15,13 +15,14 @@ zig build clean                           # Clean build artifacts
 ## Project Structure
 
 ```text
-tools/
+.
 ├── build.zig                # Build system
 ├── build.config.zig         # Configuration
 ├── libs/zig-arg/            # Shared libraries
-├── echo/                    # Tools
-├── hello/
-└── psu/
+└── tools/                   # Tools
+    ├── echo/
+    ├── hello/
+    └── psu/
 ```
 
 ## Configuration

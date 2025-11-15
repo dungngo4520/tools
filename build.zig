@@ -98,10 +98,15 @@ fn buildTool(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
-    tool_name: []const u8,
+    tool_path: []const u8,
     libraries: *std.StringHashMap(*std.Build.Module),
 ) void {
-    const main_path = b.fmt("{s}/main.zig", .{tool_name});
+    var tool_name = tool_path;
+    if (std.mem.lastIndexOfScalar(u8, tool_path, '/')) |idx| {
+        tool_name = tool_path[idx + 1 ..];
+    }
+
+    const main_path = b.fmt("{s}/main.zig", .{tool_path});
     const root_module = b.addModule(tool_name, .{
         .root_source_file = b.path(main_path),
         .target = target,

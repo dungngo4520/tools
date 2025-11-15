@@ -5,9 +5,9 @@ pub const libraries = .{
 };
 
 pub const tool_dirs = .{
-    "echo",
-    "hello",
-    "psu",
+    "tools/echo",
+    "tools/hello",
+    "tools/psu",
 };
 
 pub const targets = .{
