@@ -1,6 +1,8 @@
 // Configuration for build system
 
-pub const libraries = .{};
+pub const libraries = .{
+    .@"zig-arg" = "libs/zig-arg/src/arg.zig",
+};
 
 pub const tool_dirs = .{
     "echo",
