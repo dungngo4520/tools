@@ -1,67 +1,100 @@
 # Zig Tools Workspace
 
-This workspace organizes multiple small Zig tools, each stored in its own folder with independent documentation.
+A collection of Zig tools with shared libraries.
 
-## Build System
-
-The project uses Zig's native build system (`zig build`). No shell scripts or system commands are required, making it fully cross-platform compatible.
-
-### Building
-
-Build all tools for native target:
+## Building
 
 ```bash
-zig build
+zig build                                 # Build all tools
+zig build -Dtool=echo                     # Build specific tool
+zig build -Dtarget=aarch64-linux-gnu      # Cross-compile
+zig build -Dall-targets                   # Build for all targets
+zig build clean                           # Clean build artifacts
 ```
 
-Build a specific tool:
+## Project Structure
 
-```bash
-zig build -Dtool=hello
+```text
+tools/
+├── build.zig                # Build system
+├── build.config.zig         # Configuration
+├── libs/zig-arg/            # Shared libraries
+├── echo/                    # Tools
+├── hello/
+└── psu/
 ```
 
-Output location: `zig-out/<target>/bin/` (where `<target>` is the target triple, e.g., `x86_64-linux-gnu`)
+## Configuration
 
-### Cross-compilation
+Edit `build.config.zig` to add tools, libraries, and targets.
 
-Cross-compile to a specific target triple:
+```zig
+pub const libraries = .{
+    .@"zig-arg" = "libs/zig-arg/src/arg.zig",
+};
 
-```bash
-zig build -Dtarget=aarch64-linux-gnu
+pub const tool_dirs = .{
+    "echo",
+    "hello",
+    "psu",
+};
+
+pub const targets = .{
+    "x86_64-linux-gnu",
+    "aarch64-linux-gnu",
+    "x86_64-windows-gnu",
+    // ... more targets
+};
 ```
 
-Output location: `zig-out/<target>/bin/` (where `<target>` is the specified target triple)
+## Adding Tools
 
-Supported targets (examples):
+1. Create `my-tool/main.zig`:
 
-- `x86_64-linux-gnu` — x86_64 Linux
-- `aarch64-linux-gnu` — ARM64 Linux
-- `x86_64-windows-gnu` — x86_64 Windows
-- `aarch64-macos` — ARM64 macOS (Apple Silicon)
-- `x86_64-macos` — Intel macOS
+    ```zig
+    const std = @import("std");
+    const arg = @import("zig-arg");
 
-### Clean
+    pub fn main() void {
+        std.debug.print("Hello!\n", .{});
+    }
+    ```
 
-Remove build artifacts:
+2. Add to `build.config.zig`:
 
-```bash
-zig build clean
-```
+    ```zig
+    pub const tool_dirs = .{
+        "echo",
+        "hello",
+        "psu",
+        "my-tool",
+    };
+    ```
 
-## Project Options
+3. Build:
 
-- `-Dtool=<name|all>` — Build a specific tool or 'all' (default: all)
+    ```bash
+    zig build -Dtool=my-tool
+    ```
 
-## Tools
+## Adding Libraries
 
-Each tool has its own documentation:
+1. Create `libs/my-lib/src/lib.zig`
+2. Add to `build.config.zig`:
 
-- **[hello](hello/README.md)** — Simple greeting utility
-- **[echo](echo/README.md)** — Echo command-line arguments
-- **[psmon](psmon/README.md)** — Process monitor for resource usage
+    ```zig
+    pub const libraries = .{
+        .@"zig-arg" = "libs/zig-arg/src/arg.zig",
+        .@"my-lib" = "libs/my-lib/src/lib.zig",
+    };
+    ```
 
-## Notes
+3. Use in tools:
 
-- Zig 0.15.1+ is required and must be available on `PATH`.
-- The build system is fully cross-platform and does not rely on shell scripts or system commands.
-- CI workflow included in `.github/workflows/ci.yml` for cross-building and artifact upload.
+    ```zig
+    const my_lib = @import("my-lib");
+    ```
+
+## Requirements
+
+- Zig 0.15.2+

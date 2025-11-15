@@ -5,21 +5,28 @@ on:
   pull_request:
 
 jobs:
+  get-targets:
+    name: Extract targets from build.config.zig
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.extract.outputs.targets }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract targets
+        id: extract
+        run: |
+          python3 .github/extract-targets.py > /tmp/targets.json
+          echo "targets=$(cat /tmp/targets.json)" >> $GITHUB_OUTPUT
+
   build:
     name: Build and upload artifacts
+    needs: get-targets
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target:
-          [
-            x86_64-windows-gnu,
-            aarch64-windows-gnu,
-            x86_64-linux-gnu,
-            aarch64-linux-gnu,
-            riscv64-linux-gnu,
-            x86_64-macos-none,
-            aarch64-macos-none,
-          ]
+        target: ${{ fromJson(needs.get-targets.outputs.targets) }}
     env:
       ZIG_VERSION: "0.15.2"
     steps:
@@ -35,7 +42,6 @@ jobs:
         run: |
           set -eux
           ZV="$ZIG_VERSION"
-          # Always download x86_64 Zig on ubuntu-latest (which is x86_64)
           URL="https://ziglang.org/download/$ZV/zig-x86_64-linux-$ZV.tar.xz"
           echo "Downloading $URL"
           wget -q "$URL" -O /tmp/zig.tar.xz
